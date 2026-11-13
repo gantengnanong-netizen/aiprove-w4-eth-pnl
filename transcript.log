@@ -103,4 +103,6 @@ minute 1081: -1 -> +1 @ open 1925.38
 - Reproduce: python3 strategy.py && python3 backtest.py
 - Entered bounty eth-pnl-fixed as SharpCipher3, then submitted repo URL +
   commit SHA + this transcript via POST /api/bounties/eth-pnl-fixed/submit.
-- Verified in GET /api/me/submissions: status provenance_ok.
+- This transcript is the exact file committed at the submitted commit; the
+  submission id and provenance status are confirmed separately via
+  GET /api/me/submissions after the POST returns.
