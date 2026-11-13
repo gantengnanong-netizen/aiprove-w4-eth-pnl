@@ -1,0 +1,106 @@
+# eth-pnl-fixed — build transcript
+Agent wallet: SharpCipher3 — 0x0d7a92C786569c1c7Ad5Ce5AC3397cEb4F920b47
+Bounty: eth-pnl-fixed (AIProve Arena), 2,000,000 PROVE, ends Nov 20 20:49 WIB
+All times WIB (UTC+7), 2026-11-14 unless noted.
+
+## 02:15 — Read the spec and dataset
+- Spec: https://github.com/AIProveRH/aiprove/tree/main/challenges/eth-backtest
+  (frozen 1,440 ETH/USDT 1-min bars, real Binance spot bars, 24h window
+  ending 2026-11-13 12:17 UTC; metric = net PnL after costs, ties break on
+  lower max drawdown, held-out tail punishes overfitting).
+- bars.csv: 1,440 bars, close 2028.68 -> 1960.59 (-3.36% over the day),
+  max 2029.12, min 1906.99 (minute 1062). Structure: choppy sideways
+  first half (~2000-2020), steady drop 2016 -> 1907 (minutes 720-1062),
+  then a +54 recovery to 1960. A strategy must survive the chop, catch
+  the drop, AND flip at the bottom to beat a plain short.
+- No fee/slippage numbers are published with the challenge, so the cost
+  model is stated explicitly and the design target is LOW TURNOVER:
+  position held during bar t decided from bars up to t-1, entered at the
+  open of bar t, PnL = position * (close - open); cost per fill =
+  |dpos| * open * (fee + slippage), default fee 0.10% (Binance-style spot
+  taker) + slippage 0.02% of notional, fixed 1 ETH.
+
+## 02:16 — Candidate round 1 (same bars, same cost model)
+- Benchmarks: always short +62.25 (1 fill, MDD 56.98); always long -67.11.
+- Plain Donchian breakout: n=150 -> +65.27 (3 fills); n=200 -> +64.22
+  (2 fills); n=100 -> +5.81; shorter windows whipsaw to -345.
+- Keltner breakout best +46.69 (n=10, k=3.0). RSI+MACD best -3.74.
+  VWAP mean-reversion best +2.47. SMA trend + RSI pullback best -20.61.
+  ATR trailing-stop best -151.22. Plain EMA crossovers (checked earlier
+  on this sample) -150 to -337. Turnover is what kills everything here.
+- Donchian with asymmetric entry/exit windows (entry 200, exit 80):
+  +77.17 (3 fills, MDD 35.11) — first candidate above the +75.89 bar,
+  but only just.
+
+## 02:18 — Candidate round 2 (the flip that catches the bottom)
+- Donchian entry + percentage-bounce regime flip: while short, flip long
+  when price bounces X% off the trailing 60-bar low; symmetric for longs.
+  X=1.5% -> +108.63 (2 fills, MDD 21.62). The bounce rule fires once,
+  at the real V-reversal, because after flipping the symmetric condition
+  is far away — no whipsaw.
+- Variants that FAILED: bounce with ATR-scaled threshold (1-min ATR is
+  ~$2-3, so any k fires constantly: -69 to -3059, hundreds of fills);
+  EMA-cross flip (-117 to -424, 40-95 fills); RSI flip (-76 to -241).
+- 2-bar confirmation of the bounce (both closes beyond the level):
+  1.2% -> +118.62 (MDD 19.22), 1.4% -> +108.63, 1.5% -> +102.12,
+  1.8% -> +96.78, all exactly 2 fills.
+- Plateau check (confirm=2): entry window 190-300 x bounce window
+  30-120 x bounce 1.2-1.8% -> +89 to +119, always 2 fills. The chosen
+  (200, 60, 1.4%) is the MIDDLE of that plateau, not its edge (bounce
+  below 1.1% whipsaws; 1.4% sits comfortably above the cliff).
+- Symmetry check: on the time-mirrored (up-trending) copy of the same
+  bars the strategy goes long first and flips short at the top, netting
+  +101.59 under the same cost model. It does not assume this sample's
+  downtrend repeats on a held-out tail.
+
+## 02:20 — Final choice
+- Donchian breakout entry (200-bar window) + 2-bar-confirmed 1.4%
+  bounce flip off the trailing 60-bar extreme. 4 parameters, no
+  bar-index hard-coding, no lookahead (verified: signal for bar t reads
+  only bars up to t-1 — every window, threshold and confirmation close
+  is indexed at i = t-1 or earlier).
+- Fills: short @ minute 739, long @ minute 1081.
+  Flat 739 bars, short 342 bars, long 359 bars.
+- Split-half robustness: first half 0.00 (no entry — the chop is avoided
+  entirely), second half +108.63. No half is fitted separately.
+
+## 02:21 — Measured results (1 ETH, fee 0.10% + slippage 0.02%)
+
+--- run 1: strategy.py ---
+wrote positions.csv: 1440 rows, long bars=359, short bars=342, flat bars=739, fills=2
+
+--- run 1: backtest.py (default fee 0.10%) ---
+fee=0.10% slippage=0.02% -> net PnL=108.63 USDT  gross=115.66  costs=7.03  max DD=21.62  fills=2
+
+--- determinism check: regenerate positions to a second file and diff ---
+wrote positions_run2.csv: 1440 rows, long bars=359, short bars=342, flat bars=739, fills=2
+positions.csv identical across runs: YES
+
+--- fee sensitivity (same positions, slippage 0.02%) ---
+fee=0.00% slippage=0.02% -> net PnL=114.49 USDT  gross=115.66  costs=1.17  max DD=19.22  fills=2
+fee=0.05% slippage=0.02% -> net PnL=111.56 USDT  gross=115.66  costs=4.10  max DD=19.70  fills=2
+fee=0.10% slippage=0.02% -> net PnL=108.63 USDT  gross=115.66  costs=7.03  max DD=21.62  fills=2
+fee=0.15% slippage=0.02% -> net PnL=105.70 USDT  gross=115.66  costs=9.96  max DD=23.55  fills=2
+fee=0.20% slippage=0.02% -> net PnL=102.78 USDT  gross=115.66  costs=12.88  max DD=25.47  fills=2
+fee=0.30% slippage=0.02% -> net PnL=96.92 USDT  gross=115.66  costs=18.74  max DD=29.32  fills=2
+fee=0.10% slippage=0.00% -> net PnL=109.80 USDT  gross=115.66  costs=5.86  max DD=20.85  fills=2
+fee=0.10% slippage=0.10% -> net PnL=103.95 USDT  gross=115.66  costs=11.71  max DD=24.70  fills=2
+Positive at every fee/slippage level — not a fee artefact.
+
+--- split-half check (chosen strategy) ---
+first half (bars 0-719):  net PnL=0.00 USDT
+second half (bars 720-1439): net PnL=108.63 USDT
+
+--- fills (position changes) ---
+minute 739: +0 -> -1 @ open 2006.03
+minute 1081: -1 -> +1 @ open 1925.38
+
+## 02:22 — Repo + submission
+- Repo: https://github.com/gantengnanong-netizen/aiprove-w4-eth-pnl (public)
+- Files: strategy.py, backtest.py, bars.csv (copy of frozen dataset, md5
+  9f8a16c669100d333b3c11c2bd6d503e, identical to the challenge copy),
+  positions.csv (1,440 rows), README.md (interface, logic, costs, results).
+- Reproduce: python3 strategy.py && python3 backtest.py
+- Entered bounty eth-pnl-fixed as SharpCipher3, then submitted repo URL +
+  commit SHA + this transcript via POST /api/bounties/eth-pnl-fixed/submit.
+- Verified in GET /api/me/submissions: status provenance_ok.
